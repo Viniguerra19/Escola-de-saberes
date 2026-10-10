@@ -119,7 +119,10 @@
 
 .player-sidebar {
   width: var(--sidebar-width);
-  min-height: calc(100vh - var(--navbar-height));
+  height: calc(100vh - var(--navbar-height));
+  height: calc(100dvh - var(--navbar-height));
+  position: sticky;
+  top: var(--navbar-height);
   background: var(--bg-surface);
   border-right: 1px solid var(--glass-border);
   overflow-y: auto;
@@ -141,6 +144,38 @@
   font-size: 0.8125rem;
 }
 
+.sidebar-close { display: none; }
+
+.sidebar-search-label {
+  display: block;
+  margin-top: var(--space-md);
+  margin-bottom: var(--space-xs);
+  color: var(--text-secondary);
+  font-size: .8125rem;
+}
+
+.sidebar-search {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--glass-border-hover);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 1rem;
+}
+
+.sidebar-search:focus-visible, .sidebar-close:focus-visible, .sidebar-toggle:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+.sidebar-search-empty {
+  padding: var(--space-md);
+  font-size: .875rem;
+}
+
 .player-sidebar-content {
   padding: var(--space-sm);
 }
@@ -158,7 +193,12 @@
 }
 
 .module-title {
+  width: 100%;
   padding: 12px 16px;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
   font-size: 0.8125rem;
   font-weight: 600;
   color: var(--text-muted);
@@ -183,18 +223,22 @@
   font-size: 0.7rem;
 }
 
+.module-name {
+  flex: 1;
+  overflow-wrap: anywhere;
+  padding: 0 var(--space-sm);
+}
+
 .module-group.open .module-title .accordion-arrow {
   transform: rotate(180deg);
 }
 
 .module-lessons {
-  max-height: 0;
-  overflow: hidden;
-  transition: max-height 0.3s ease;
+  display: none;
 }
 
 .module-group.open .module-lessons {
-  max-height: 2000px;
+  display: block;
 }
 
 .module-title .module-progress {
@@ -205,6 +249,11 @@
 
 /* Lesson item in sidebar */
 .lesson-item {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
   display: flex;
   align-items: center;
   gap: var(--space-md);
@@ -214,6 +263,11 @@
   transition: all var(--transition-fast);
   font-size: 0.875rem;
   color: var(--text-secondary);
+}
+
+.module-title:focus-visible, .lesson-item:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
 }
 
 .lesson-item:hover {
@@ -371,6 +425,29 @@
 
 /* --- Responsive --- */
 @media (max-width: 768px) {
+  .admin-course-header,
+  .admin-module-header,
+  .lesson-tree-item {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .admin-course-actions,
+  .admin-module-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .admin-course-actions .btn,
+  .admin-module-actions .btn,
+  .lesson-tree-item .btn {
+    min-height: 44px;
+  }
+
+  .admin-lesson-title { min-width: min(180px, 100%); }
+
   .navbar {
     padding: 0 var(--space-md);
   }
@@ -397,7 +474,9 @@
     left: 0;
     top: var(--navbar-height);
     bottom: 0;
-    z-index: 400;
+    height: auto;
+    width: min(360px, 100vw);
+    z-index: 550;
     transform: translateX(-100%);
     box-shadow: var(--shadow-lg);
   }
@@ -406,19 +485,47 @@
     transform: translateX(0);
   }
 
+  .player-sidebar.open ~ .sidebar-toggle {
+    visibility: hidden;
+  }
+
   .sidebar-toggle {
     display: flex;
+    bottom: max(16px, env(safe-area-inset-bottom));
+    left: 16px;
+    right: 16px;
+    width: auto;
+    min-height: 52px;
+    height: auto;
+    padding: 12px 16px;
+    border-radius: var(--radius-md);
+    font-size: .9375rem;
+    font-weight: 700;
   }
 
   .player-main {
-    padding: var(--space-md);
+    padding: var(--space-md) var(--space-md) calc(92px + env(safe-area-inset-bottom));
+  }
+
+  .sidebar-close {
+    display: grid;
+    place-items: center;
+    float: right;
+    width: 44px;
+    height: 44px;
+    border: 1px solid var(--glass-border-hover);
+    border-radius: var(--radius-sm);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 1.125rem;
+    cursor: pointer;
   }
 
   .sidebar-overlay {
     position: fixed;
     inset: 0;
     background: rgba(0, 0, 0, 0.5);
-    z-index: 399;
+    z-index: 540;
     display: none;
   }
 

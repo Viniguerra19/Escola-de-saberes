@@ -1,11 +1,11 @@
 // ============================================
 // AUTH
-// Session management (token + user in localStorage)
+// Email-only access. The server looks up the registered user for each request.
 // ============================================
 
 import { STORAGE_KEYS } from './utils/constants.js';
 import { getStoredJSON, setStoredJSON, removeStored } from './utils/helpers.js';
-import { apiLogin, apiValidateToken, apiLogout, clearCache } from './api.js';
+import { apiLogin, clearCache } from './api.js';
 
 /**
  * Current user state (in-memory)
@@ -26,7 +26,7 @@ export function getUser() {
  * Check if user is logged in
  */
 export function isLoggedIn() {
-  return !!localStorage.getItem(STORAGE_KEYS.TOKEN) && !!getUser();
+  return !!getUser()?.email;
 }
 
 /**
@@ -36,8 +36,7 @@ export function isAdmin() {
   const user = getUser();
   if (!user) return false;
   const role = String(user.role || '').toLowerCase().trim();
-  const email = String(user.email || '').toLowerCase().trim();
-  return role === 'master_admin' && email === 'viniciusguerra19@icloud.com';
+  return role === 'master_admin';
 }
 
 /**
@@ -48,8 +47,7 @@ export function isAdmin() {
 export async function login(email) {
   const data = await apiLogin(email);
 
-  if (data.token && data.user) {
-    localStorage.setItem(STORAGE_KEYS.TOKEN, data.token);
+  if (data.user?.email) {
     setStoredJSON(STORAGE_KEYS.USER, data.user);
     currentUser = data.user;
     return data;
@@ -59,43 +57,33 @@ export async function login(email) {
 }
 
 /**
- * Validate current session token
+ * Refresh the stored user's data from the registered email on page load.
  * @returns {Promise<boolean>}
  */
-export async function validateSession() {
-  const token = localStorage.getItem(STORAGE_KEYS.TOKEN);
-  if (!token) return false;
+export async function refreshUser() {
+  const email = getUser()?.email;
+  if (!email) return false;
 
   try {
-    const data = await apiValidateToken(token);
-    if (data.valid && data.user) {
+    const data = await apiLogin(email);
+    if (data.user?.email) {
       setStoredJSON(STORAGE_KEYS.USER, data.user);
       currentUser = data.user;
       return true;
     }
-    // Token invalid — clean up
-    logout(false);
-    return false;
-  } catch {
-    // Network error — keep session (offline tolerance)
+  } catch (error) {
+    if (error.code === 'BLOCKED' || error.code === 'DUPLICATE' || error.message === 'E-mail não cadastrado' || error.message === 'A Escola está em atualização. Tente novamente em instantes.') {
+      logout();
+      return false;
+    }
+    // Keep the last known user while offline; API calls still check the sheet.
     return !!getUser();
   }
+  return false;
 }
 
-/**
- * Logout
- * @param {boolean} callApi - Whether to call the backend logout endpoint
- */
-export async function logout(callApi = true) {
-  if (callApi) {
-    try {
-      await apiLogout();
-    } catch {
-      // Silent fail — we're logging out anyway
-    }
-  }
-
-  localStorage.removeItem(STORAGE_KEYS.TOKEN);
+export function logout() {
+  localStorage.removeItem('eds_token'); // Remove tokens left by older versions.
   removeStored(STORAGE_KEYS.USER);
   clearCache();
   currentUser = null;

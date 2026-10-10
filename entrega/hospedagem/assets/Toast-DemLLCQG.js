@@ -1,0 +1,1 @@
+function e(e,t=`info`){let n=document.getElementById(`toast-container`);n||(n=document.createElement(`div`),n.id=`toast-container`,document.body.append(n));let r=document.createElement(`div`);r.className=`toast toast-`+t,r.setAttribute(`role`,t===`error`?`alert`:`status`),r.textContent=e,n.append(r),setTimeout(()=>r.remove(),5e3)}export{e as t};

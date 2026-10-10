@@ -1,718 +1,401 @@
-/**
- * ============================================
- * ESCOLA DE SABERES - APP SCRIPT BACKEND
- * ============================================
- * SPREADSHEET_ID: 1N8gsG2A99KI1f-DuoPYffTrvIqHzjDQb-5_voIu4QWc
+/** Escola de Saberes — LMS 2.0. Copie este arquivo inteiro para Code.gs.
+ * Entrada por e-mail cadastrado, deliberadamente sem verificação de identidade.
+ * Dados legados são lidos sem migração destrutiva. Novas colunas são aditivas.
  */
-
 const DB_ID = '1N8gsG2A99KI1f-DuoPYffTrvIqHzjDQb-5_voIu4QWc';
-
-// --- MAIN ENTRY POINTS ---
-
-function doGet(e) {
-  return handleRequest(e, 'GET');
-}
-
-function doPost(e) {
-  return handleRequest(e, 'POST');
-}
-
+const LMS_VERSION = '2.0.0';
+const SCHEMA = {
+  courses: { sheet: 'cursos', fields: { id:['id'], title:['titulo','title'], description:['descricao','description'], slug:['slug'], coverUrl:['url','cover_url','imagem'], turma:['turma'], status:['status'], position:['position','ordem'], version:['version'], updatedAt:['updated_at'] } },
+  modules: { sheet: 'Modulos', fields: { id:['id'], courseId:['id do curso','course_id'], title:['titulos','titulo','title'], status:['status'], position:['position','ordem'], version:['version'], updatedAt:['updated_at'] } },
+  lessons: { sheet: 'Lições', fields: { id:['id'], moduleId:['id do modulo','module_id'], title:['titulo','title'], type:['type','tipo'], url:['url'], description:['descricao','description'], resources:['resources'], status:['status'], position:['position','ordem'], version:['version'], updatedAt:['updated_at'] } },
+  users: { sheet: 'Usuários', fields: { name:['nome','name'], email:['email','e-mail'], role:['cargo','role','permissao','permissoes'], legacyCourses:['cursos escola de saberes'], turma:['turma'], courseIds:['course_ids'], status:['status'], version:['version'], updatedAt:['updated_at'], lastActivity:['last_activity'] } },
+  progress: { sheet: 'Progresso do usuarios', fields: { email:['email','usuario','e-mail'], lessonId:['lesson_id','id da licao','id da aula','licao'], completedAt:['completed_at'] } },
+  materials: { sheet: 'LMS Materiais', fields: { id:['id'], title:['title'], type:['type'], url:['url'], text:['text'], status:['status'], version:['version'], updatedAt:['updated_at'] } },
+  settings: { sheet: 'LMS Configurações', fields: { key:['key'], value:['value'] } },
+  audit: { sheet: 'LMS Histórico', fields: { id:['id'], at:['at'], email:['email'], action:['action'], entity:['entity'], details:['details'] } },
+  requests: { sheet: 'LMS Requisições', fields: { id:['id'], email:['email'], action:['action'], result:['result'], at:['at'] } }
+};
+let requestTables = {};
+function norm(v) { return String(v == null ? '' : v).normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim().toLowerCase(); }
+function str(v) { return String(v == null ? '' : v).trim(); }
+function fail(message, code) { const e = new Error(message); e.code = code || 'VALIDATION'; throw e; }
+function uid() { return Utilities.getUuid(); }
+function now() { return new Date().toISOString(); }
+function parse(v, fallback) { try { return v === '' || v == null ? fallback : JSON.parse(String(v)); } catch (_) { return fallback; } }
+function safeCell(v) { if (typeof v === 'string' && /^[=+@\-]/.test(v)) return "'" + v; return v == null ? '' : v; }
+function doGet(e) { return handleRequest(e, 'GET'); }
+function doPost(e) { return handleRequest(e, 'POST'); }
 function handleRequest(e, method) {
-  // CORS Headers
-  const headers = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  };
-
+  requestTables = {};
   try {
-    const params = method === 'GET' ? e.parameter : JSON.parse(e.postData.contents);
-    const action = params.action;
-
-    let result = {};
-
-    switch (action) {
-      // Auth
-      case 'login':
-        result = doLogin(params.email);
-        break;
-      case 'validate_token':
-        result = doValidateToken(params.token);
-        break;
-      case 'logout':
-        result = doLogout(params.token);
-        break;
-
-      // Student
-      case 'get_courses':
-        result = getCourses(params.token);
-        break;
-      case 'get_course_content':
-        result = getCourseContent(params.token, params.courseId);
-        break;
-      case 'toggle_lesson':
-        result = toggleLessonComplete(params.token, params.lessonId, params.isComplete);
-        break;
-
-      // Admin
-      case 'admin_dashboard':
-        result = adminDashboard(params.token);
-        break;
-      case 'admin_get_courses':
-        result = adminGetCourses(params.token);
-        break;
-      case 'admin_create_course':
-        result = adminCreateCourse(params.token, params);
-        break;
-      case 'admin_update_course':
-        result = adminUpdateCourse(params.token, params);
-        break;
-      case 'admin_delete_course':
-        result = adminDeleteCourse(params.token, params.courseId);
-        break;
-      case 'admin_get_users':
-        result = adminGetUsers(params.token);
-        break;
-      case 'admin_create_user':
-        result = adminCreateUser(params.token, params);
-        break;
-      case 'admin_update_user_access':
-        result = adminUpdateUserAccess(params.token, params);
-        break;
-      case 'admin_create_module':
-        result = adminCreateModule(params.token, params);
-        break;
-      case 'admin_create_lesson':
-        result = adminCreateLesson(params.token, params);
-        break;
-      case 'admin_create_bulk_lessons':
-        result = adminCreateBulkLessons(params.token, params);
-        break;
-      case 'admin_update_lesson':
-        result = adminUpdateLesson(params.token, params);
-        break;
-      case 'admin_delete_lesson':
-        result = adminDeleteLesson(params.token, params.lessonId);
-        break;
-
-      default:
-        return respond({ error: 'Ação não encontrada' }, headers);
+    const p = method === 'GET' ? (e.parameter || {}) : JSON.parse(e.postData.contents);
+    if (method === 'GET' && p.action !== 'health' && p.action !== 'get_settings') fail('Use POST para esta operação.');
+    return respond(dispatch(p));
+  } catch (e) { return respond({ error: e.message || 'Erro interno', code: e.code || 'SERVER' }); }
+}
+function respond(data) { return ContentService.createTextOutput(JSON.stringify(data)).setMimeType(ContentService.MimeType.JSON); }
+function db() { return SpreadsheetApp.openById(DB_ID); }
+function ensureGrid(sheet,lastRow,lastColumn) {
+  if(lastRow>sheet.getMaxRows()) sheet.insertRowsAfter(sheet.getMaxRows(),lastRow-sheet.getMaxRows());
+  if(lastColumn>sheet.getMaxColumns()) sheet.insertColumnsAfter(sheet.getMaxColumns(),lastColumn-sheet.getMaxColumns());
+}
+function table(kind, create) {
+  if (requestTables[kind] && !create) return requestTables[kind];
+  const spec = SCHEMA[kind];
+  if (!spec) fail('Tipo de registro inválido.');
+  let sheet = db().getSheetByName(spec.sheet);
+  if (!sheet && create) sheet = db().insertSheet(spec.sheet);
+  let values = sheet ? sheet.getDataRange().getValues() : [];
+  let headers = (values[0] || []).map(norm);
+  const columns = {};
+  Object.keys(spec.fields).forEach(key => {
+    let col = headers.findIndex(h => spec.fields[key].indexOf(h) >= 0);
+    // Existing installations used positional columns for these fields only.
+    if (col < 0 && kind === 'users' && key === 'role' && headers.length >= 3) col = 2;
+    if (col < 0 && kind === 'progress' && headers.length >= 2 && (key === 'email' || key === 'lessonId')) col = key === 'email' ? 0 : 1;
+    if (col < 0 && create) {
+      col = headers.length === 1 && headers[0] === '' ? 0 : headers.length;
+      ensureGrid(sheet,1,col+1);
+      sheet.getRange(1,col+1).setValue(spec.fields[key][0]);
+      headers[col] = spec.fields[key][0];
     }
+    columns[key] = col;
+  });
+  if (create) values = sheet.getDataRange().getValues();
+  const rows = values.slice(1).map((raw,i) => {
+    const row = {_row: i+2};
+    Object.keys(columns).forEach(key => row[key] = columns[key] < 0 ? '' : raw[columns[key]] == null ? '' : raw[columns[key]]);
+    ['id','courseId','moduleId','lessonId','email'].forEach(key => { if (key in row) row[key] = str(row[key]); });
+    if ('version' in row) row.version = Number(row.version) || 0;
+    if ('position' in row) row.position = row.position === '' ? i : Number(row.position);
+    if ('status' in row) row.status = str(row.status) || (kind === 'users' ? 'active' : 'published');
+    ['completedAt','lastActivity','updatedAt','at'].forEach(key=>{if(row[key] instanceof Date)row[key]=row[key].toISOString();});
+    if (kind === 'lessons') row.resources = parse(row.resources, null);
+    if (kind === 'users') { row.courseIds = parse(row.courseIds, null); row.role = norm(row.role) || 'normal'; }
+    return row;
+  }).filter(row => Object.keys(columns).some(key => row[key] !== '' && row[key] != null && key !== 'version' && key !== 'position' && key !== 'status'));
+  return requestTables[kind] = { sheet, headers, columns, rows };
+}
+function rows(kind) { return table(kind).rows; }
+function write(kind, data, existing) {
+  const t = table(kind,true);
+  ensureGrid(t.sheet,existing?existing._row:t.sheet.getLastRow()+1,t.headers.length);
+  const values = Array(t.headers.length).fill('');
+  Object.keys(data).forEach(key => {
+    if (!(key in t.columns) || t.columns[key] < 0) return;
+    let value = data[key];
+    if (Array.isArray(value) || value && typeof value === 'object') value = JSON.stringify(value);
+    value = safeCell(value);
+    // Update only the chosen field: formulas and unrelated columns stay intact.
+    if(existing) t.sheet.getRange(existing._row,t.columns[key]+1).setValue(value);
+    else values[t.columns[key]] = value;
+  });
+  if(!existing) t.sheet.getRange(t.sheet.getLastRow()+1,1,1,values.length).setValues([values]);
+  delete requestTables[kind];
+  return data;
+}
+function appendBatch(kind,items) {
+  if(!items.length)return;
+  const t=table(kind,true);
+  const values=items.map(item=>t.headers.map((_,col)=>{
+    const key=Object.keys(t.columns).find(key=>t.columns[key]===col);
+    let value=key?item[key]:'';
+    if(Array.isArray(value)||value&&typeof value==='object')value=JSON.stringify(value);
+    return safeCell(value);
+  }));
+  ensureGrid(t.sheet,t.sheet.getLastRow()+values.length,t.headers.length);
+  t.sheet.getRange(t.sheet.getLastRow()+1,1,values.length,t.headers.length).setValues(values);
+  delete requestTables[kind];
+}
 
-    return respond(result, headers);
-  } catch (error) {
-    return respond({ error: error.message || 'Erro interno no servidor' }, headers, 500);
+function removeRows(kind, matches) {
+  const t = table(kind);
+  matches.sort((a,b) => b._row-a._row).forEach(row => t.sheet.deleteRow(row._row));
+  delete requestTables[kind];
+}
+function lookup(kind,id) { const row = rows(kind).find(r => str(r.id) === str(id)); if (!row) fail('Registro não encontrado.','NOT_FOUND'); return row; }
+function publicRow(row) { const out = Object.assign({},row); delete out._row; return out; }
+function profile(email) {
+  const matches = rows('users').filter(u => norm(u.email) === norm(email));
+  if (!norm(email) || !matches.length) fail('E-mail não cadastrado','UNREGISTERED');
+  if (matches.length > 1) fail('E-mail duplicado na planilha. Corrija o cadastro antes de entrar.','DUPLICATE');
+  const user = matches[0];
+  if (user.status === 'blocked' || user.status === 'archived') fail('Cadastro bloqueado. Entre em contato com a escola.','BLOCKED');
+  user.role = norm(user.role) || 'normal';
+  return user;
+}
+function admin(email) { const u = profile(email); if(u.role !== 'master_admin') fail('Acesso negado: você não é administrador.','FORBIDDEN'); return u; }
+function canAccessCourse(user,course) {
+  if (user.status === 'blocked' || user.status === 'archived') return false;
+  if (user.role === 'master_admin') return true;
+  if (Array.isArray(user.courseIds)) return user.courseIds.map(String).indexOf(str(course.id)) >= 0;
+  const permissions = Array.isArray(user.courses) ? user.courses : String(user.legacyCourses || '').split(',').map(v => v.trim().toLowerCase());
+  const title = str(course.title || course.titulo).toLowerCase(), slug = str(course.slug).toLowerCase(), turma = str(course.turma).toLowerCase();
+  if (turma && [title,slug].some(v => v && (permissions.indexOf(v+' ['+turma+']') >= 0 || permissions.indexOf(v+' ['+norm(turma)+']') >= 0))) return true;
+  if (![title,slug].some(v => v && permissions.indexOf(v) >= 0)) return false;
+  return !turma || !!norm(user.turma) && (norm(turma).indexOf(norm(user.turma)) >= 0 || norm(user.turma).indexOf(norm(turma)) >= 0);
+}
+function ordered(list) { return list.slice().sort((a,b) => Number(a.position)-Number(b.position) || a._row-b._row); }
+function visible(row,preview) { return preview || row.status === 'published'; }
+function resources(lesson) {
+  if (Array.isArray(lesson.resources)) return lesson.resources;
+  return lesson.url ? [{id: 'legacy-'+lesson.id, title: lesson.title, type: lesson.type || 'video', url: lesson.url, text:''}] : [];
+}
+function courseTree(course,user,preview) {
+  if (!canAccessCourse(user,course) || !visible(course,preview)) fail('Acesso negado a este curso','FORBIDDEN');
+  const complete = new Set(rows('progress').filter(p => norm(p.email) === norm(user.email)).map(p => p.lessonId));
+  const allLessons = rows('lessons');
+  const modules = ordered(rows('modules').filter(m => m.courseId === course.id && visible(m,preview))).map(m => Object.assign(publicRow(m), {
+    lessons: ordered(allLessons.filter(l => l.moduleId === m.id && visible(l,preview))).map(l => Object.assign(publicRow(l), { resources: resources(l), contentUrl: l.url, completed: complete.has(l.id) }))
+  }));
+  return {course:publicRow(course), modules, preview:!!preview};
+}
+function settings() {
+  const result = { name:'Escola de Saberes', subtitle:'Onde a fé encontra o conhecimento.', logo:'https://terreiroiansaguerreira.com.br/wp-content/uploads/2026/01/11-96653-7848.png', color:'#0ea5e9', support:'', welcome:'Bem-vindo(a) à sua área de estudos.' };
+  rows('settings').forEach(r => { if (Object.hasOwnProperty.call(result,r.key)) result[r.key] = str(r.value); });
+  return result;
+}
+function dispatch(p) {
+  const action = str(p.action);
+  if (action === 'health') return {version:LMS_VERSION, schema:2};
+  if (action === 'get_settings') return {settings:settings(), version:LMS_VERSION};
+  if (action === 'get_profile') return {user:publicRow(profile(p.email))};
+  const user = profile(p.userEmail);
+  if (action === 'get_courses') return { courses: ordered(rows('courses').filter(c => c.status === 'published' && canAccessCourse(user,c))).map(c => {
+    const tree = courseTree(c,user,false), lessons = tree.modules.reduce((a,m) => a.concat(m.lessons),[]);
+    return Object.assign(publicRow(c), {totalLessons:lessons.length, completedLessons:lessons.filter(l=>l.completed).length, moduleCount:tree.modules.length});
+  }) };
+  if (action === 'get_course_content') return courseTree(lookup('courses',p.courseId),user,p.preview === true && user.role === 'master_admin');
+  if (action === 'toggle_lesson') return locked(() => toggleProgress(p,user));
+  if (action === 'get_flashcards') return flashcards(p,user);
+  admin(p.userEmail);
+  if (action === 'admin_get_courses') return {courses:ordered(rows('courses')).map(c => Object.assign(publicRow(c),{modules:ordered(rows('modules').filter(m=>m.courseId===c.id)).map(m=>Object.assign(publicRow(m),{lessons:ordered(rows('lessons').filter(l=>l.moduleId===m.id)).map(l=>Object.assign(publicRow(l),{resources:resources(l)}))}))}))};
+  if (action === 'admin_get_users') return {users:rows('users').map(u=>Object.assign(publicRow(u),{effectiveCourseIds: rows('courses').filter(c=>canAccessCourse(u,c)).map(c=>c.id)}))};
+  if (action === 'admin_get_materials') return {materials:rows('materials').map(publicRow)};
+  if (action === 'admin_dashboard') return report(p);
+  if (action === 'admin_audit') return {entries:rows('audit').slice(-200).reverse().map(publicRow)};
+  if (action === 'admin_diagnostics') return diagnostics();
+  if (action === 'admin_import' && p.dryRun === true) return importRows(p);
+  if (action === 'admin_check_links') return checkLinks();
+  const mutations = ['admin_save','admin_archive','admin_restore','admin_duplicate','admin_reorder','admin_save_user','admin_import','admin_settings','admin_setup','admin_upload'];
+  if (mutations.indexOf(action) < 0) fail('Ação não encontrada','UNKNOWN_ACTION');
+  return locked(() => {
+    admin(p.userEmail);
+    const requestId = str(p.requestId);
+    if (!requestId || requestId.length > 100) fail('Identificador da operação ausente.');
+    const previous = rows('requests').find(r=>r.id===requestId && norm(r.email)===norm(p.userEmail));
+    if (previous) { if(previous.action!==action) fail('Identificador reutilizado para outra operação.'); return parse(previous.result,{}); }
+    // A pending receipt prevents a repeated request from duplicating a partial operation.
+    write('requests',{id:requestId,email:norm(p.userEmail),action,result:JSON.stringify({error:'Operação anterior interrompida. Recarregue e confira os dados antes de iniciar uma nova operação.',code:'INDETERMINATE'}),at:now()});
+    let result;
+    if(action==='admin_save') result = saveEntity(p);
+    if(action==='admin_archive' || action==='admin_restore') result = changeStatus(p, action==='admin_archive'?'archived':'draft');
+    if(action==='admin_duplicate') result = duplicate(p);
+    if(action==='admin_reorder') result = reorder(p);
+    if(action==='admin_save_user') result = saveUser(p);
+    if(action==='admin_import') result = importRows(p);
+    if(action==='admin_settings') result = saveSettings(p);
+    if(action==='admin_setup') { const check=diagnostics(); if(check.errors.length) fail('Corrija as inconsistências indicadas no diagnóstico antes de preparar a estrutura.'); Object.keys(SCHEMA).forEach(k=>table(k,true)); result={success:true,version:LMS_VERSION}; }
+    if(action==='admin_upload') result = upload(p);
+    write('audit',{id:uid(),at:now(),email:norm(p.userEmail),action,entity:str(p.id || p.kind),details:JSON.stringify({id:result.id || '',count:result.count || 0})});
+    write('requests',{result:JSON.stringify(result),at:now()},rows('requests').find(r=>r.id===requestId && norm(r.email)===norm(p.userEmail)));
+    return result;
+  });
+}
+function locked(fn) { const lock=LockService.getScriptLock(); lock.waitLock(20000); requestTables={}; try { return fn(); } finally { lock.releaseLock(); } }
+function checkVersion(row,version) { if (Number(version)!==Number(row.version)) fail('Este registro foi alterado em outra tela. Recarregue antes de salvar.','CONFLICT'); }
+function validUrl(value, optional) {
+  const s=str(value); if(!s && optional) return '';
+  if(s.length>4000 || !/^https:\/\/[^\s<>"'\\]+$/i.test(s)) fail('Use um endereço HTTPS válido.');
+  const host=s.slice(8).split('/')[0].split(':')[0].toLowerCase();
+  if(host.indexOf('@')>=0 || host==='localhost' || /^\d+\./.test(host) || host.indexOf('.')<0 || /\.local$/.test(host)) fail('Endereço de recurso não permitido.');
+  return s;
+}
+function required(value,label,max) { const s=str(value); if(!s || s.length>(max || 250)) fail(label+' obrigatório (máximo '+(max||250)+' caracteres).'); return s; }
+function validResource(raw) {
+  const r={id:str(raw.id)||uid(),title:required(raw.title || 'Material','Título'),type:str(raw.type),url:str(raw.url),text:String(raw.text||'')};
+  if(['video','audio','pdf','image','slide','flashcard','text','link'].indexOf(r.type)<0) fail('Tipo de material inválido.');
+  if(r.text.length>45000) fail('Texto muito longo. Divida em mais materiais.');
+  if(r.type==='text') { required(r.text,'Texto',45000); r.url=''; }
+  else if(r.type==='flashcard' && r.text) { r.url=''; }
+  else if(r.type==='slide') r.url=r.url.split(/\n|,/).map(v=>validUrl(v)).join('\n');
+  else r.url=validUrl(r.url);
+  return r;
+}
+function validateEntity(kind,input,old) {
+  if(['courses','modules','lessons','materials'].indexOf(kind)<0) fail('Registro inválido.');
+  const data=Object.assign({},old || {},input);
+  data.title=required(data.title,'Título');
+  data.status=str(data.status)||(old?'published':'draft');
+  if(['draft','published','archived'].indexOf(data.status)<0) fail('Situação inválida.');
+  data.description=String(data.description||''); if(data.description.length>12000) fail('Descrição muito longa.');
+  if(kind==='courses') { data.coverUrl=validUrl(data.coverUrl,true); data.turma=str(data.turma); data.slug=str(data.slug)||norm(data.title).replace(/[^a-z0-9]+/g,'-'); }
+  if(kind==='modules') lookup('courses',data.courseId);
+  if(kind==='lessons') {
+    const parent=lookup('modules',data.moduleId); lookup('courses',parent.courseId);
+    const list=Array.isArray(data.resources)?data.resources:resources(data);
+    if(list.length>30) fail('Limite de 30 materiais por aula.');
+    data.resources=list.map(validResource);
+    if(JSON.stringify(data.resources).length>45000) fail('Materiais excedem o limite de texto por aula.');
+    if(data.status==='published' && !data.resources.length) fail('Adicione ao menos um material antes de publicar.');
+    data.type=data.resources[0]?.type || 'text'; data.url=data.resources[0]?.url || '';
   }
+  if(kind==='materials') Object.assign(data,validResource(data));
+  data.id=old?old.id:uid(); data.version=(old?old.version:0)+1; data.updatedAt=now();
+  data.position=old?old.position:rows(kind).length;
+  return data;
 }
-
-function respond(data, headers, status = 200) {
-  return ContentService.createTextOutput(JSON.stringify(data))
-    .setMimeType(ContentService.MimeType.JSON);
+function saveEntity(p) {
+  const old=p.id?lookup(p.kind,p.id):null; if(old) checkVersion(old,p.version);
+  const data=validateEntity(p.kind,p.data || {},old);
+  if(p.kind==='courses' && old && (data.title!==old.title || data.turma!==old.turma || data.slug!==old.slug)) {
+    const catalogue=rows('courses');
+    rows('users').filter(u=>!Array.isArray(u.courseIds)).forEach(u=>write('users',{courseIds:catalogue.filter(c=>canAccessCourse(u,c)).map(c=>c.id),version:u.version+1,updatedAt:now()},u));
+  }
+  write(p.kind,data,old); return {success:true,id:data.id,version:data.version};
 }
-
-// --- DATABASE HELPERS ---
-
-function getSheet(sheetName) {
-  const ss = SpreadsheetApp.openById(DB_ID);
-  return ss.getSheetByName(sheetName);
+function changeStatus(p,status) { if(['courses','modules','lessons','materials'].indexOf(p.kind)<0) fail('Tipo inválido.'); const old=lookup(p.kind,p.id); checkVersion(old,p.version); write(p.kind,{status,version:old.version+1,updatedAt:now()},old); return {success:true,id:old.id}; }
+function duplicate(p) {
+  if(p.kind!=='lessons') fail('A duplicação está disponível para aulas.');
+  const old=lookup('lessons',p.id); checkVersion(old,p.version);
+  const data=validateEntity('lessons',Object.assign({},old,{title:old.title+' (cópia)',status:'draft',moduleId:p.moduleId||old.moduleId}),null);
+  data.resources=data.resources.map(r=>Object.assign({},r,{id:uid()}));
+  write('lessons',data); return {success:true,id:data.id};
 }
-
-function getRowsAsObjects(sheet) {
-  if (!sheet) return [];
-  const startRow = 1; // Assuming header on row 1
-  const startCol = 1;
-
-  const data = sheet.getDataRange().getValues();
-  if (data.length <= 1) return [];
-
-  const headers = data[0].map(h => String(h).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim());
-  const rows = [];
-
-  for (let i = 1; i < data.length; i++) {
-    // Skip empty ghost rows
-    if (!data[i].some(cell => String(cell).trim() !== '')) {
+function reorder(p) {
+  if(['courses','modules','lessons'].indexOf(p.kind)<0) fail('Ordenação inválida.');
+  const key=p.kind==='modules'?'courseId':p.kind==='lessons'?'moduleId':null;
+  const list=rows(p.kind).filter(r=>!key || r[key]===p.parentId);
+  if(!Array.isArray(p.items) || p.items.length!==list.length || new Set(p.items.map(i=>i.id)).size!==list.length) fail('Lista de ordenação incompleta. Recarregue.');
+  p.items.forEach(item=>{const row=list.find(r=>r.id===item.id);if(!row) fail('Registro fora deste grupo.');checkVersion(row,item.version);});
+  p.items.forEach((item,index)=>{const row=list.find(r=>r.id===item.id);write(p.kind,{position:index,version:row.version+1,updatedAt:now()},row);});
+  return {success:true};
+}
+function saveUser(p) {
+  const input=p.data || {}, email=norm(p.email || input.email);
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) fail('E-mail inválido.');
+  const matches=rows('users').filter(u=>norm(u.email)===email);
+  if(matches.length>1) fail('Há cadastros duplicados para este e-mail.');
+  const old=matches[0];
+  if(old && !p.email) fail('Este e-mail já está cadastrado.');
+  if(old) checkVersion(old,p.version);
+  const data={email,name:required(input.name,'Nome'),turma:str(input.turma),role:str(input.role)||'normal',status:str(input.status)||'active',courseIds:input.courseIds,version:(old?old.version:0)+1,updatedAt:now()};
+  if(['normal','master_admin'].indexOf(data.role)<0 || ['active','blocked'].indexOf(data.status)<0) fail('Papel ou situação inválida.');
+  if(!Array.isArray(data.courseIds) || data.courseIds.some(id=>!rows('courses').some(c=>c.id===id))) fail('Matrículas inválidas.');
+  if(norm(p.userEmail)===email && (data.role!=='master_admin' || data.status!=='active')) fail('Não é possível remover seu próprio acesso administrativo.');
+  if(old && old.role==='master_admin' && (data.role!=='master_admin' || data.status!=='active') && rows('users').filter(u=>norm(u.role)==='master_admin'&&u.status==='active').length<=1) fail('Mantenha ao menos um administrador ativo.');
+  write('users',data,old); return {success:true,id:email};
+}
+function toggleProgress(p,user) {
+  user=profile(user.email);
+  if(typeof p.isComplete!=='boolean') fail('Estado de conclusão inválido');
+  const lesson=lookup('lessons',p.lessonId), module=lookup('modules',lesson.moduleId), course=lookup('courses',module.courseId);
+  if(!canAccessCourse(user,course)||[lesson,module,course].some(r=>r.status!=='published')) fail('Acesso negado a esta aula','FORBIDDEN');
+  const matches=rows('progress').filter(r=>norm(r.email)===norm(user.email)&&r.lessonId===lesson.id);
+  if(p.isComplete && !matches.length) write('progress',{email:norm(user.email),lessonId:lesson.id,completedAt:now()});
+  if(!p.isComplete) removeRows('progress',matches);
+  write('users',{lastActivity:now()},user);
+  return {success:true,completed:p.isComplete};
+}
+function report(p) {
+  const courses=rows('courses'), modules=rows('modules'), lessons=rows('lessons'), progress=rows('progress'), users=rows('users').filter(u=>norm(u.role)!=='master_admin');
+  const engagement=[];
+  users.filter(u=>!p.turma || norm(u.turma)===norm(p.turma)).forEach(u=>courses.filter(c=>c.status==='published' && (!p.courseId || c.id===p.courseId) && canAccessCourse(u,c)).forEach(c=>{
+    const moduleIds=new Set(modules.filter(m=>m.courseId===c.id&&m.status==='published').map(m=>m.id));
+    const list=lessons.filter(l=>moduleIds.has(l.moduleId)&&l.status==='published');
+    const completed=progress.filter(r=>norm(r.email)===norm(u.email)&&list.some(l=>l.id===r.lessonId));
+    const count=new Set(completed.map(r=>r.lessonId)).size;
+    const dates=completed.map(r=>str(r.completedAt)).filter(Boolean).sort();
+    const lastActivity=str(u.lastActivity)||dates[dates.length-1]||'';
+    if(p.since && (!lastActivity || lastActivity.slice(0,10)<p.since)) return;
+    if(p.until && (!lastActivity || lastActivity.slice(0,10)>p.until)) return;
+    engagement.push({userName:u.name,userEmail:u.email,turma:u.turma,courseId:c.id,courseTitle:c.title,totalLessons:list.length,completedCount:count,progress:list.length?Math.round(count/list.length*100):0,lastActivity});
+  }));
+  return {stats:{totalUsers:users.length,totalCourses:courses.filter(c=>c.status==='published').length,totalLessons:lessons.filter(l=>l.status==='published' && modules.some(m=>m.id===l.moduleId && m.status==='published' && courses.some(c=>c.id===m.courseId && c.status==='published'))).length,notStarted:engagement.filter(r=>!r.completedCount).length},engagement};
+}
+function saveSettings(p) {
+  const allowed=Object.keys(settings()), input=p.settings || {};
+  Object.keys(input).forEach(key=>{if(allowed.indexOf(key)<0) fail('Configuração não permitida.');});
+  const values={};
+  Object.keys(input).forEach(key=>{values[key]=str(input[key]);if(values[key].length>500) fail('Configuração muito longa.');});
+  if('name' in values) required(values.name,'Nome');
+  if('color' in values && !/^#[\da-f]{6}$/i.test(values.color)) fail('Use uma cor hexadecimal.');
+  if('logo' in values) validUrl(values.logo,true);
+  if('support' in values && values.support) { if(!/^mailto:[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.support)) validUrl(values.support); }
+  Object.keys(values).forEach(key=>write('settings',{key,value:values[key]},rows('settings').find(r=>r.key===key)));
+  return {success:true,settings:settings()};
+}
+function diagnostics() {
+  const errors=[],warnings=[];
+  ['courses','modules','lessons'].forEach(kind=>{const ids=new Set();rows(kind).forEach(r=>{if(!r.id || ids.has(r.id)) errors.push(kind+': ID vazio ou duplicado (linha '+r._row+').');ids.add(r.id);});});
+  const emails=new Set();rows('users').forEach(u=>{if(!norm(u.email)||emails.has(norm(u.email))) errors.push('E-mail vazio ou duplicado (linha '+u._row+').');emails.add(norm(u.email));});
+  rows('modules').forEach(m=>{if(!rows('courses').some(c=>c.id===m.courseId)) errors.push('Módulo órfão: '+m.id);});
+  rows('lessons').forEach(l=>{if(!rows('modules').some(m=>m.id===l.moduleId)) errors.push('Aula órfã: '+l.id);});
+  rows('progress').forEach(r=>{if(!rows('lessons').some(l=>l.id===r.lessonId)) warnings.push('Progresso com aula ausente: '+r.lessonId);});
+  return {version:LMS_VERSION,errors,warnings,counts:Object.fromEntries(Object.keys(SCHEMA).map(k=>[k,rows(k).length]))};
+}
+function importRows(p) {
+  if(!Array.isArray(p.items)||p.items.length<1||p.items.length>100) fail('Importe entre 1 e 100 linhas.');
+  const accepted=[],errors=[], seen=new Set();
+  p.items.forEach((item,i)=>{try {
+    const data=validateEntity('lessons',{title:item.title,moduleId:p.moduleId,status:'draft',resources:[{title:item.title,type:item.type,url:item.url,text:item.text||''}]},null);
+    const key=norm(data.title)+'|'+data.moduleId+'|'+data.url;
+    if(seen.has(key)||rows('lessons').some(l=>norm(l.title)+'|'+l.moduleId+'|'+l.url===key)) fail('Aula duplicada.');
+    seen.add(key);accepted.push(data);
+  } catch(e) {errors.push({line:i+1,error:e.message});}});
+  if(p.dryRun) return {success:true,count:accepted.length,errors,preview:accepted.map(publicRow)};
+  if(errors.length) fail('Corrija os erros da prévia antes de importar.');
+  const offset=rows('lessons').length; accepted.forEach((data,i)=>data.position=offset+i); appendBatch('lessons',accepted);
+  return {success:true,count:accepted.length};
+}
+function upload(p) {
+  const mime=str(p.mime), allowed=['application/pdf','image/png','image/jpeg','image/webp','audio/mpeg','audio/mp4','video/mp4','text/csv'];
+  if(allowed.indexOf(mime)<0) fail('Formato de arquivo não permitido.');
+  if(!p.base64 || p.base64.length>7000000) fail('Limite de 5 MB. Para vídeos maiores, use um link.');
+  const bytes=Utilities.base64Decode(p.base64); if(bytes.length>5*1024*1024) fail('Arquivo maior que 5 MB.');
+  const name=required(p.name,'Nome do arquivo');
+  const props=PropertiesService.getScriptProperties();let folderId=props.getProperty('LMS_UPLOAD_FOLDER');
+  if(!folderId){folderId=DriveApp.createFolder('Escola de Saberes — Materiais').getId();props.setProperty('LMS_UPLOAD_FOLDER',folderId);}
+  const file=DriveApp.getFolderById(folderId).createFile(Utilities.newBlob(bytes,mime,name));
+  try { file.setSharing(DriveApp.Access.ANYONE_WITH_LINK,DriveApp.Permission.VIEW); }
+  catch(e) { file.setTrashed(true); fail('O Google Workspace não permitiu compartilhar este arquivo por link.'); }
+  return {success:true,id:file.getId(),url:file.getUrl()};
+}
+function flashcards(p,user) {
+  const lesson=lookup('lessons',p.lessonId), module=lookup('modules',lesson.moduleId), course=lookup('courses',module.courseId);
+  const preview=p.preview===true && user.role==='master_admin';
+  if(!canAccessCourse(user,course)||[lesson,module,course].some(r=>!visible(r,preview))) fail('Acesso negado','FORBIDDEN');
+  const resource=resources(lesson).find(r=>r.id===p.resourceId);
+  if(!resource || resource.type!=='flashcard') fail('Material não encontrado.');
+  if(resource.text) return {csv:resource.text};
+  let url=validUrl(resource.url);
+  const match=url.match(/^https:\/\/(?:drive|docs)\.google\.com\/(?:file\/d|spreadsheets\/d)\/([\w-]+)/);
+  if(match) url=url.indexOf('spreadsheets')>=0?'https://docs.google.com/spreadsheets/d/'+match[1]+'/export?format=csv':'https://drive.google.com/uc?export=download&id='+match[1];
+  let response;
+  for(let hop=0;hop<4;hop++) {
+    response=UrlFetchApp.fetch(url,{muteHttpExceptions:true,followRedirects:false});
+    const code=response.getResponseCode();
+    if(code>=300 && code<400) {
+      const headers=response.getHeaders();
+      const location=headers.Location || headers.location;
+      if(!location)break;
+      url=validUrl(location); // Only HTTPS public destinations, no credentials or local addresses.
       continue;
     }
-
-    const obj = {};
-    for (let j = 0; j < headers.length; j++) {
-      obj[headers[j]] = data[i][j];
-    }
-    // inject row index for updates and raw columns for robust logic
-    obj._rowIndex = i + 1;
-    obj._raw_0 = data[i][0];
-    obj._raw_1 = data[i][1];
-    obj._raw_2 = data[i][2]; // Coluna C: Permissões de Admin (master_admin)
-    rows.push(obj);
+    break;
   }
-
-  return rows;
+  if(response.getResponseCode()!==200) fail('Não foi possível ler o CSV. Use um link público direto ou cole o conteúdo no editor.');
+  if(response.getContent().length>1024*1024) fail('CSV excede 1 MB.');
+  const csv=response.getContentText();if(/<html|<!doctype/i.test(csv)) fail('O link retornou uma página, não um CSV.');
+  return {csv};
 }
-
-// --- AUTH LOGIC ---
-
-function doLogin(email) {
-  if (!email) throw new Error('E-mail obrigatório');
-
-  const sheet = getSheet('Usuários');
-  const users = getRowsAsObjects(sheet);
-  
-  const user = users.find(u => String(u.email).toLowerCase() === String(email).toLowerCase());
-  
-  if (!user) {
-    throw new Error('Usuário não encontrado');
-  }
-
-  // Generate simple token
-  const token = Utilities.getUuid();
-  
-  // Find token column index (assumed column G, index 7, but let's find it via header)
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h).toLowerCase().trim());
-  const tokenColIdx = headers.indexOf('token') + 1;
-  
-  if(tokenColIdx > 0) {
-    sheet.getRange(user._rowIndex, tokenColIdx).setValue(token);
-  } else {
-    // If column doesn't exist, create it (assuming column G)
-    sheet.getRange(1, 7).setValue('Token');
-    sheet.getRange(user._rowIndex, 7).setValue(token);
-  }
-
-  return {
-    token: token,
-    user: {
-      name: user.nome || user.name || '',
-      email: user.email,
-      role: String(user._raw_2 || user['permissão'] || 'normal').toLowerCase().trim(),
-      courses: user['cursos escola de saberes'] ? user['cursos escola de saberes'].split(',').map(s => s.trim().toLowerCase()) : [],
-      turma: user.turma || '',
-      gerencia: user['áreas de gestão'] || ''
-    }
-  };
+function checkLinks() {
+  const list=rows('materials').filter(m=>m.status!=='archived' && m.url && m.type!=='slide').slice(0,25);
+  return {limit:25,results:list.map(m=>{try{const url=validUrl(m.url);const response=UrlFetchApp.fetch(url,{muteHttpExceptions:true,followRedirects:false});const code=response.getResponseCode();return {id:m.id,title:m.title,code,status:code>=200&&code<300?'Respondeu':code===404||code===410?'Não encontrado':'Inconclusivo (acesso ou redirecionamento)'};}catch(e){return {id:m.id,title:m.title,code:0,status:'Inconclusivo: '+e.message};}})};
 }
-
-function doValidateToken(inToken) {
-  if (!inToken) throw new Error('Token obrigatório');
-
-  const sheet = getSheet('Usuários');
-  const users = getRowsAsObjects(sheet);
-  
-  const user = users.find(u => u.token === inToken);
-  
-  if (!user) {
-    return { valid: false };
-  }
-
-  return {
-    valid: true,
-    user: {
-      name: user.nome || user.name || '',
-      email: user.email,
-      role: String(user._raw_2 || user['permissão'] || 'normal').toLowerCase().trim(),
-      courses: user['cursos escola de saberes'] ? user['cursos escola de saberes'].split(',').map(s => s.trim().toLowerCase()) : [],
-      turma: user.turma || '',
-      gerencia: user['áreas de gestão'] || ''
-    }
-  };
-}
-
-function doLogout(inToken) {
-  if (!inToken) return { success: true };
-
-  const sheet = getSheet('Usuários');
-  const users = getRowsAsObjects(sheet);
-  
-  const user = users.find(u => u.token === inToken);
-  
-  if (user) {
-     const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h).toLowerCase().trim());
-     const tokenColIdx = headers.indexOf('token') + 1;
-     if(tokenColIdx > 0){
-       sheet.getRange(user._rowIndex, tokenColIdx).setValue('');
-     }
-  }
-
-  return { success: true };
-}
-
-// --- STUDENT LOGIC ---
-
-function getCourses(inToken) {
-  const auth = doValidateToken(inToken);
-  if (!auth.valid) throw new Error('Token inválido');
-
-  const sheet = getSheet('cursos');
-  if(!sheet) return { courses: [] }; // Handle non-existent sheet gracefulyy
-  
-  const courses = getRowsAsObjects(sheet);
-  const userCoursesSlugs = auth.user.courses || [];
-  
-  let validCourses = courses;
-  // Filter by user permissions if not master_admin
-  if (auth.user.role !== 'master_admin') {
-      const userTurmaNormalized = String(auth.user.turma || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-
-      validCourses = validCourses.filter(c => {
-         const cTitle = String(c.titulo || c.title || '').trim().toLowerCase();
-         const cSlug = String(c.slug || '').trim().toLowerCase();
-         const cTurmaRaw = String(c.turma || '').trim();
-         const courseTurmaNorm = cTurmaRaw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-         
-         const identifierTitle = cTurmaRaw ? `${cTitle} [${courseTurmaNorm}]` : cTitle;
-         const identifierSlug = cTurmaRaw ? `${cSlug} [${courseTurmaNorm}]` : cSlug;
-
-         // 1. Explicit Access: bypassing global turma
-         const hasExplicitAccess = userCoursesSlugs.includes(identifierTitle) || 
-                                   userCoursesSlugs.includes(identifierSlug) || 
-                                   userCoursesSlugs.includes(`${cTitle} [${cTurmaRaw.toLowerCase()}]`);
-         
-         if (hasExplicitAccess) return true;
-
-         // 2. Legacy/General Access
-         const hasGeneralAccess = userCoursesSlugs.includes(cSlug) || userCoursesSlugs.includes(cTitle);
-         if (!hasGeneralAccess) return false;
-
-         // 3. Apply global turma restriction
-         if (cTurmaRaw !== '') {
-           if (!userTurmaNormalized || (!courseTurmaNorm.includes(userTurmaNormalized) && !userTurmaNormalized.includes(courseTurmaNorm))) {
-              return false;
-           }
-         }
-
-         return true;
-      });
-  }
-
-  return {
-    courses: validCourses.map(c => ({
-      id: c.id,
-      slug: c.slug,
-      title: c.titulo,
-      description: c.descricao || c.description,
-      coverUrl: c.url || c.cover_url || c.imagem || ''
-    }))
-  };
-}
-
-// ---------------------------------------------------------
-// COURSE CONTENT & PROGRESS
-// ---------------------------------------------------------
-function getCourseContent(token, courseId) {
-  const auth = doValidateToken(token);
-  if (!auth.valid) throw new Error('Token inválido');
-
-  const sheetCourses = getSheet('cursos');
-  const sheetModules = getSheet('Modulos');
-  const sheetLessons = getSheet('Lições');
-  const sheetProgress = getSheet('Progresso do usuarios');
-
-  const courses = getRowsAsObjects(sheetCourses);
-  const course = courses.find(c => String(c.id) === String(courseId));
-  if (!course) throw new Error('Curso não encontrado');
-
-  const modulesRaw = getRowsAsObjects(sheetModules).filter(m => String(m['id do curso']) === String(courseId));
-  const lessonsRaw = getRowsAsObjects(sheetLessons);
-  
-  const progressRaw = getRowsAsObjects(sheetProgress)
-      .filter(p => String(p._raw_0).trim().toLowerCase() === String(auth.user.email).trim().toLowerCase());
-  const completedLessonIds = progressRaw.map(p => String(p._raw_1).trim());
-
-  const modules = modulesRaw.map(m => {
-    const modLessons = lessonsRaw.filter(l => String(l['id do modulo']) === String(m.id)).map(l => ({
-      id: String(l.id),
-      title: l.titulo || l.title || '',
-      type: l.type || 'video',
-      contentUrl: l.url || '',
-      duration: l.duration || '00:00',
-      completed: completedLessonIds.includes(String(l.id).trim())
-    }));
-    return {
-      id: String(m.id),
-      title: m.titulos || m.title || '',
-      lessons: modLessons
-    };
-  });
-
-  return {
-    course: {
-      id: String(course.id),
-      title: course.titulo || course.title || '',
-      description: course.descricao || course.description || '',
-      coverUrl: course.url || course.cover_url || ''
-    },
-    modules: modules
-  };
-}
-
-function toggleLessonComplete(token, lessonId, isComplete) {
-  const auth = doValidateToken(token);
-  if (!auth.valid) throw new Error('Token inválido');
-
-  const sheetProgress = getSheet('Progresso do usuarios');
-  let progressRows;
-  // If sheet is completely empty except headers, getRowsAsObjects handles it 
-  // but if it has no headers, might fail. Assume it has headers.
-  try {
-    progressRows = getRowsAsObjects(sheetProgress);
-  } catch(e) {
-    progressRows = [];
-  }
-  
-  const userEmail = String(auth.user.email).trim().toLowerCase();
-  const targetLessonId = String(lessonId).trim();
-  
-  const existingIndex = progressRows.findIndex(p => 
-    String(p._raw_0).trim().toLowerCase() === userEmail && 
-    String(p._raw_1).trim() === targetLessonId
-  );
-  
-  if (isComplete && existingIndex === -1) {
-    // Add row
-    sheetProgress.appendRow([userEmail, targetLessonId]);
-  } else if (!isComplete && existingIndex !== -1) {
-    // Remove row - _rowIndex stores the actual sheet row number
-    sheetProgress.deleteRow(progressRows[existingIndex]._rowIndex);
-  }
-
-  return { success: true };
-}
-
-// =============================================================
-// ADMIN LOGIC — Protegido por role === 'master_admin'
-// =============================================================
-
-function requireAdmin(token) {
-  const auth = doValidateToken(token);
-  if (!auth.valid) throw new Error('Token inválido');
-  if (auth.user.role !== 'master_admin') throw new Error('Acesso negado: você não é administrador.');
-  return auth;
-}
-
-// --- ADMIN DASHBOARD ---
-function adminDashboard(token) {
-  requireAdmin(token);
-
-  const users = getRowsAsObjects(getSheet('Usuários'));
-  const courses = getRowsAsObjects(getSheet('cursos'));
-  const modules = getRowsAsObjects(getSheet('Modulos'));
-  const lessons = getRowsAsObjects(getSheet('Lições'));
-  
-  let progressSheet = getSheet('Progresso do usuarios');
-  let progress = [];
-  try { progress = getRowsAsObjects(progressSheet); } catch(e) {}
-
-  let totalUsers = 0;
-  let totalUsersSexta = 0;
-  let totalUsersSabado = 0;
-  let totalUsersSemTurma = 0;
-
-  const normalizeStr = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-
-  // Build engajamento: para cada aluno, calcular % de progresso por curso
-  const engagement = [];
-  
-  users.forEach(u => {
-    const role = String(u._raw_2 || '').toLowerCase().trim();
-    const email = String(u.email || '').trim().toLowerCase();
-    
-    // Process all users faithfully to spreadsheet rows
-    totalUsers++;
-    const userTurmaNormalized = normalizeStr(u.turma);
-    if (userTurmaNormalized.includes('sexta')) totalUsersSexta++;
-    else if (userTurmaNormalized.includes('sabado')) totalUsersSabado++;
-    else totalUsersSemTurma++;
-
-    const userProgress = progress.filter(p => String(p._raw_0).trim().toLowerCase() === email);
-    const completedIds = userProgress.map(p => String(p._raw_1).trim());
-    
-    courses.forEach(c => {
-      // 1. CHECKS DE ACESSO
-      const courseTitle = String(c.titulo || c.title || '').toLowerCase().trim();
-      const courseTurmaRaw = String(c.turma || '').trim();
-      const courseTurmaNorm = courseTurmaRaw.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-      
-      const identifierTitle = courseTurmaRaw ? `${courseTitle} [${courseTurmaNorm}]` : courseTitle;
-      
-      const userCoursesRaw = String(u['cursos escola de saberes'] || '').toLowerCase();
-      const userCoursesList = userCoursesRaw.split(',').map(s => s.trim());
-
-      const hasCourseHeaderMatch = Object.keys(u).some(key => {
-         if (['nome', 'name', 'email', 'cargo', 'role', 'token', 'turma', '_rowindex', '_raw_0', '_raw_1', '_raw_2'].includes(key)) return false;
-         return key.includes(courseTitle) && String(u[key]).trim() !== '';
-      });
-
-      const hasExplicitAccess = userCoursesList.includes(identifierTitle) || userCoursesList.includes(`${courseTitle} [${courseTurmaRaw.toLowerCase()}]`);
-      const hasGeneralAccess = userCoursesList.includes(courseTitle) || hasCourseHeaderMatch;
-
-      if (!hasExplicitAccess && !hasGeneralAccess) return; // Aluno não está matriculado
-      
-      // 2. CHECK DE TURMA (se não for acesso explícito)
-      if (!hasExplicitAccess && courseTurmaRaw !== '') {
-          if (!userTurmaNormalized || (!courseTurmaNorm.includes(userTurmaNormalized) && !userTurmaNormalized.includes(courseTurmaNorm))) {
-             return; // Curso é restrito e aluno não pertence à turma
-          }
-      }
-
-      // Processa Licoes e Modulos deste curso
-      const courseLessons = lessons.filter(l => {
-        const mod = modules.find(m => String(m.id) === String(l['id do modulo']));
-        return mod && String(mod['id do curso']) === String(c.id);
-      });
-      
-      if (courseLessons.length === 0) return;
-      
-      const completed = courseLessons.filter(l => completedIds.includes(String(l.id).trim())).length;
-      const pct = Math.round((completed / courseLessons.length) * 100);
-      
-      engagement.push({
-        userName: u.nome || u.name || email,
-        userEmail: email,
-        courseTitle: c.titulo || c.title || '',
-        courseId: String(c.id),
-        progress: pct,
-        completedCount: completed,
-        totalLessons: courseLessons.length
-      });
-    });
-  });
-
-  const totalCourses = courses.length;
-  const totalLessons = lessons.length;
-
-  return {
-    stats: { totalUsers, totalUsersSexta, totalUsersSabado, totalUsersSemTurma, totalCourses, totalLessons },
-    engagement
-  };
-}
-
-// --- ADMIN GET COURSES (detailed with modules + lesson counts) ---
-function adminGetCourses(token) {
-  requireAdmin(token);
-  
-  const courses = getRowsAsObjects(getSheet('cursos'));
-  const modules = getRowsAsObjects(getSheet('Modulos'));
-  const lessons = getRowsAsObjects(getSheet('Lições'));
-
-  return {
-    courses: courses.map(c => {
-      const mods = modules.filter(m => String(m['id do curso']) === String(c.id));
-      const modData = mods.map(m => {
-        const modLessons = lessons.filter(l => String(l['id do modulo']) === String(m.id));
-        return {
-          id: String(m.id),
-          title: m.titulos || m.title || '',
-          lessonCount: modLessons.length,
-          lessons: modLessons.map(l => ({
-            id: String(l.id),
-            title: l.titulo || l.title || '',
-            type: l.type || 'video',
-            url: l.url || ''
-          }))
-        };
-      });
-      return {
-        id: String(c.id),
-        title: c.titulo || c.title || '',
-        description: c.descricao || c.description || '',
-        slug: c.slug || '',
-        coverUrl: c.url || c.cover_url || c.imagem || '',
-        turma: c.turma || '',
-        _rowIndex: c._rowIndex,
-        modules: modData,
-        totalLessons: modData.reduce((sum, m) => sum + m.lessonCount, 0)
-      };
-    })
-  };
-}
-
-// --- ADMIN CREATE COURSE ---
-function adminCreateCourse(token, params) {
-  requireAdmin(token);
-  const sheet = getSheet('cursos');
-  const id = 'C' + Date.now();
-  const slug = String(params.title || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-$/, '');
-  sheet.appendRow([id, params.title || '', params.description || '', slug, params.coverUrl || '', params.turma || '']);
-  return { success: true, courseId: id };
-}
-
-// --- ADMIN UPDATE COURSE ---
-function adminUpdateCourse(token, params) {
-  requireAdmin(token);
-  const sheet = getSheet('cursos');
-  const courses = getRowsAsObjects(sheet);
-  const course = courses.find(c => String(c.id) === String(params.courseId));
-  if (!course) throw new Error('Curso não encontrado');
-  
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h).toLowerCase().trim());
-  
-  if (params.title) {
-    const col = headers.indexOf('titulo') + 1 || headers.indexOf('title') + 1;
-    if (col > 0) sheet.getRange(course._rowIndex, col).setValue(params.title);
-  }
-  if (params.description) {
-    const col = headers.indexOf('descricao') + 1 || headers.indexOf('description') + 1;
-    if (col > 0) sheet.getRange(course._rowIndex, col).setValue(params.description);
-  }
-  if (params.coverUrl) {
-    const col = headers.indexOf('url') + 1 || headers.indexOf('cover_url') + 1;
-    if (col > 0) sheet.getRange(course._rowIndex, col).setValue(params.coverUrl);
-  }
-  if (params.turma !== undefined) {
-    let col = headers.indexOf('turma') + 1;
-    if (col === 0) {
-      col = 6; // Força na coluna F
-      sheet.getRange(1, col).setValue('turma');
-    }
-    sheet.getRange(course._rowIndex, col).setValue(params.turma);
-  }
-  
-  return { success: true };
-}
-
-// --- ADMIN DELETE COURSE ---
-function adminDeleteCourse(token, courseId) {
-  requireAdmin(token);
-  const sheet = getSheet('cursos');
-  const courses = getRowsAsObjects(sheet);
-  const course = courses.find(c => String(c.id) === String(courseId));
-  if (!course) throw new Error('Curso não encontrado');
-  sheet.deleteRow(course._rowIndex);
-  return { success: true };
-}
-
-// --- ADMIN GET USERS ---
-function adminGetUsers(token) {
-  requireAdmin(token);
-  const users = getRowsAsObjects(getSheet('Usuários'));
-  
-  // Mirror exact sheet contents
-  const validUsers = users;
-  
-  return {
-    users: validUsers.map(u => ({
-      name: u.nome || u.name || '',
-      email: u.email || '',
-      role: String(u._raw_2 || 'normal').toLowerCase().trim(),
-      courses: u['cursos escola de saberes'] || '',
-      turma: u.turma || '',
-      _rowIndex: u._rowIndex
-    }))
-  };
-}
-
-// --- ADMIN CREATE USER ---
-function adminCreateUser(token, params) {
-  requireAdmin(token);
-  const sheet = getSheet('Usuários');
-  sheet.appendRow([params.name || '', params.email || '', 'normal']);
-  return { success: true };
-}
-
-// --- ADMIN CREATE MODULE ---
-function adminCreateModule(token, params) {
-  requireAdmin(token);
-  const sheet = getSheet('Modulos');
-  const id = 'M' + Date.now();
-  sheet.appendRow([id, params.courseId, params.title || 'Novo Módulo']);
-  return { success: true, moduleId: id };
-}
-
-// --- ADMIN CREATE LESSON ---
-function adminCreateLesson(token, params) {
-  requireAdmin(token);
-  const sheet = getSheet('Lições');
-  const id = 'L' + Date.now();
-  sheet.appendRow([id, params.moduleId, params.title || 'Nova Aula', params.type || 'video', params.url || '']);
-  return { success: true, lessonId: id };
-}
-
-// --- ADMIN CREATE BULK LESSONS ---
-function adminCreateBulkLessons(token, params) {
-  requireAdmin(token);
-  const sheet = getSheet('Lições');
-  const lessons = params.lessons;
-  if (!lessons || !Array.isArray(lessons) || lessons.length === 0) return { success: true };
-  
-  const timestamp = Date.now();
-  const rows = lessons.map((l, index) => [
-    'L' + (timestamp + index), 
-    l.moduleId, 
-    l.title || 'Slide', 
-    l.type || 'slide', 
-    l.url || ''
-  ]);
-  
-  // Bulk insert is much faster than loop appendRow
-  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 5).setValues(rows);
-  return { success: true };
-}
-
-// --- ADMIN UPDATE LESSON ---
-function adminUpdateLesson(token, params) {
-  requireAdmin(token);
-  const sheet = getSheet('Lições');
-  const lessons = getRowsAsObjects(sheet);
-  const lesson = lessons.find(l => String(l.id) === String(params.lessonId));
-  if (!lesson) throw new Error('Aula não encontrada');
-  
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h).toLowerCase().trim());
-  
-  if (params.title) {
-    const col = headers.indexOf('titulo') + 1 || headers.indexOf('title') + 1;
-    if (col > 0) sheet.getRange(lesson._rowIndex, col).setValue(params.title);
-  }
-  if (params.type) {
-    const col = headers.indexOf('type') + 1;
-    if (col > 0) sheet.getRange(lesson._rowIndex, col).setValue(params.type);
-  }
-  if (params.url) {
-    const col = headers.indexOf('url') + 1;
-    if (col > 0) sheet.getRange(lesson._rowIndex, col).setValue(params.url);
-  }
-  
-  return { success: true };
-}
-
-// --- ADMIN DELETE LESSON ---
-function adminDeleteLesson(token, lessonId) {
-  requireAdmin(token);
-  const sheet = getSheet('Lições');
-  const lessons = getRowsAsObjects(sheet);
-  const lesson = lessons.find(l => String(l.id) === String(lessonId));
-  if (!lesson) throw new Error('Aula não encontrada');
-  sheet.deleteRow(lesson._rowIndex);
-  return { success: true };
-}
-
-// --- ADMIN UPDATE USER ACCESS ---
-function adminUpdateUserAccess(token, params) {
-  requireAdmin(token);
-  const sheet = getSheet('Usuários');
-  const users = getRowsAsObjects(sheet);
-  const user = users.find(u => String(u.email).toLowerCase().trim() === String(params.email).toLowerCase().trim());
-  if (!user) throw new Error('Usuário não encontrado.');
-
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim());
-  
-  // Update Turma
-  if (params.turma !== undefined) {
-    let col = headers.indexOf('turma') + 1;
-    if (col === 0) {
-      col = 6; // Create 'turma' in usually empty col F
-      sheet.getRange(1, col).setValue('turma');
-    }
-    sheet.getRange(user._rowIndex, col).setValue(params.turma);
-  }
-
-  // Update massive permissions
-  if (params.coursesStr !== undefined) {
-    let col = headers.indexOf('cursos escola de saberes') + 1;
-    if (col === 0) {
-      col = sheet.getLastColumn() + 1;
-      sheet.getRange(1, col).setValue('cursos escola de saberes');
-    }
-    sheet.getRange(user._rowIndex, col).setValue(params.coursesStr);
-  }
-
-  return { success: true };
+/** Execute uma vez no editor se o Google solicitar novas permissões após a atualização. */
+function autorizarEscola() {
+  db().getName();
+  DriveApp.getFileById(DB_ID).getName();
+  return {version:LMS_VERSION,ready:true};
 }

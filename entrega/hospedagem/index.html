@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Escola de Saberes — Plataforma de aprendizado online do Terreiro Iansã Guerreira" />
+  <title>Escola de Saberes</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+  <script type="module" crossorigin src="./assets/index-BmfUXXYw.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-B4GzHaxh.css">
+</head>
+<body>
+  <div id="app"></div>
+  <div id="app-status" class="sr-only" role="status" aria-live="polite"></div>
+  <script>
+    // Remove apenas registros da pasta desta escola, sem alterar outros sites.
+    if ('serviceWorker' in navigator) {
+      const schoolScope = new URL('./', location.href).href;
+      navigator.serviceWorker.getRegistrations().then(async registrations => {
+        const local = registrations.filter(registration => registration.scope === schoolScope);
+        const controlled = local.some(registration => registration.active &&
+          navigator.serviceWorker.controller && registration.active.scriptURL === navigator.serviceWorker.controller.scriptURL);
+        await Promise.all(local.map(registration => registration.unregister()));
+        if (controlled) location.reload();
+      }).catch(() => {});
+    }
+  </script>
+  <script src="./config.js?v=20260929"></script>
+  <div id="toast-container"></div>
+</body>
+</html>

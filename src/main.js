@@ -1,99 +1,29 @@
-// ============================================
-// MAIN ENTRY POINT
-// Application initialization, global CSS, router setup
-// ============================================
-
 import './styles/global.css';
 import './styles/components.css';
 import './styles/layout.css';
-import './styles/player.css';
-
-import { router } from './router.js';
-import { isLoggedIn, validateSession } from './auth.js';
-
-// Import Pages
-import { renderLoginPage } from './pages/LoginPage.js';
-import { renderDashboardPage } from './pages/DashboardPage.js';
-import { renderCoursePlayerPage } from './pages/CoursePlayerPage.js';
-import { renderAdminPage } from './pages/AdminPage.js';
-
-const appConfig = {
-  appContainerId: 'app',
-};
-
-/**
- * Render a component into the main app container
- * @param {HTMLElement|Promise<HTMLElement>} component
- */
-async function render(componentOrPromise) {
-  const container = document.getElementById(appConfig.appContainerId);
-  if (!container) return;
-
-  // Show global spinner while resolving
-  container.innerHTML = '<div class="loading-screen"><div class="spinner spinner-lg"></div></div>';
-
-  try {
-    const el = await componentOrPromise;
-    container.innerHTML = '';
-    
-    if (typeof el === 'string') {
-      container.innerHTML = el;
-    } else {
-      container.appendChild(el);
-    }
-  } catch (error) {
-    console.error('Render Error:', error);
-    container.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-state-icon text-danger">⚠️</div>
-        <h3>Erro fatal ao renderizar</h3>
-        <p>${error.message}</p>
-      </div>
-    `;
-  }
+import './styles/login.css';
+import './styles/lms.css';
+import {router} from './router.js';
+import {isLoggedIn,refreshUser} from './auth.js';
+import {loadSettings} from './settings.js';
+let renderId=0, active=null;
+async function render(loader,params){
+  const id=++renderId,root=document.getElementById('app');active?.dispose?.();active=null;
+  document.querySelectorAll('.lms-dialog').forEach(d=>d.remove());
+  root.innerHTML='<div class="loading-screen" role="status"><div class="spinner"></div><p>Carregando…</p></div>';
+  try{const page=await loader(params);if(id!==renderId){page.dispose?.();return;}active=page;root.replaceChildren(page);window.scrollTo(0,0);}
+  catch(error){if(id!==renderId)return;root.innerHTML='<main class="page-container empty-state"><h1>Não foi possível abrir esta página</h1><p></p><a href="#/dashboard">Voltar para meus cursos</a></main>';root.querySelector('p').textContent=error.message;}
 }
-
-/**
- * Initialize Router and Application
- */
-async function initApp() {
-  // Validate token silently on boot if exists
-  if (isLoggedIn()) {
-    await validateSession();
-  }
-
-  // --- Router Configuration ---
-
-  // Global Navigation Guard
-  router.guard((to, params) => {
-    const isAuthRoute = to === 'login';
-    const hasSession = isLoggedIn();
-
-    if (!hasSession && !isAuthRoute) {
-      // Must be logged in to view other routes
-      router.navigate('login');
-      return false;
-    }
-
-    if (hasSession && isAuthRoute) {
-      // Already logged in, no need to see login page
-      router.navigate('dashboard');
-      return false;
-    }
-
-    return true;
-  });
-
-  // Define Routes
-  router
-    .on('login', () => render(renderLoginPage()))
-    .on('dashboard', () => render(renderDashboardPage()))
-    .on('course/:id', (params) => render(renderCoursePlayerPage(params)))
-    .on('admin', () => render(renderAdminPage()));
-
-  // Start Router
+async function init(){
+  localStorage.removeItem('eds_token');
+  await Promise.all([loadSettings(),isLoggedIn()?refreshUser():Promise.resolve()]);
+  router.guard(to=>{if(!isLoggedIn()&&to!=='login'){router.navigate('login');return false;}if(isLoggedIn()&&to==='login'){router.navigate('dashboard');return false;}return true;});
+  router.on('login',()=>render(async()=> (await import('./pages/LoginPage.js')).renderLoginPage()))
+    .on('dashboard',()=>render(async()=> (await import('./pages/DashboardPage.js')).renderDashboardPage()))
+    .on('course/:id',p=>render(async p=>(await import('./pages/CoursePlayerPage.js')).renderCoursePlayerPage(p),p))
+    .on('course/:id/lesson/:lessonId',p=>render(async p=>(await import('./pages/CoursePlayerPage.js')).renderCoursePlayerPage(p),p))
+    .on('preview/:id',p=>render(async p=>(await import('./pages/CoursePlayerPage.js')).renderCoursePlayerPage({...p,preview:true}),p))
+    .on('admin',()=>render(async()=> (await import('./pages/AdminPage.js')).renderAdminPage()));
   router.start();
 }
-
-// Boot
-document.addEventListener('DOMContentLoaded', initApp);
+document.addEventListener('DOMContentLoaded',()=>{init().catch(error=>{document.getElementById('app').textContent='Não foi possível iniciar: '+error.message;});});

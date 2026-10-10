@@ -4,14 +4,13 @@
 // ============================================
 
 // Google Apps Script Web App URL (replace after deploying)
-export const API_URL = 'https://script.google.com/macros/s/AKfycbyj_CkCNls8hg6673BwPx5Ba8n8qbFzMipn4wUJOZ7zZmRNlfYcfFi4s0f9Xhf4Coih9w/exec';
+export const API_URL = globalThis.EDS_CONFIG?.apiUrl || 'https://script.google.com/macros/s/AKfycbyj_CkCNls8hg6673BwPx5Ba8n8qbFzMipn4wUJOZ7zZmRNlfYcfFi4s0f9Xhf4Coih9w/exec';
 
 // Google Spreadsheet ID
 export const SPREADSHEET_ID = '1N8gsG2A99KI1f-DuoPYffTrvIqHzjDQb-5_voIu4QWc';
 
 // Local Storage Keys
 export const STORAGE_KEYS = {
-  TOKEN: 'eds_token',
   USER: 'eds_user',
   COURSES_CACHE: 'eds_courses_cache',
   COURSE_CONTENT_CACHE: 'eds_course_content_',

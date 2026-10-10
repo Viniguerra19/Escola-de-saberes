@@ -12,6 +12,21 @@
 </head>
 <body>
   <div id="app"></div>
+  <div id="app-status" class="sr-only" role="status" aria-live="polite"></div>
+  <script>
+    // Remove apenas registros da pasta desta escola, sem alterar outros sites.
+    if ('serviceWorker' in navigator) {
+      const schoolScope = new URL('./', location.href).href;
+      navigator.serviceWorker.getRegistrations().then(async registrations => {
+        const local = registrations.filter(registration => registration.scope === schoolScope);
+        const controlled = local.some(registration => registration.active &&
+          navigator.serviceWorker.controller && registration.active.scriptURL === navigator.serviceWorker.controller.scriptURL);
+        await Promise.all(local.map(registration => registration.unregister()));
+        if (controlled) location.reload();
+      }).catch(() => {});
+    }
+  </script>
+  <script src="%BASE_URL%config.js?v=20260929"></script>
   <div id="toast-container"></div>
   <script type="module" src="/src/main.js"></script>
 </body>

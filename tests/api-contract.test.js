@@ -1,0 +1,6 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {apiRequest,apiLogin} from '../src/api.js';
+import {h,safeUrl,parseCsv,csvCell} from '../src/utils/ui.js';
+test('cliente envia e-mail em POST, identifica mutações e propaga conflitos',async()=>{const calls=[];globalThis.localStorage={getItem:()=>JSON.stringify({email:'admin@example.test'})};globalThis.fetch=async(_,options)=>{calls.push(JSON.parse(options.body));return {ok:true,json:async()=>({success:true})};};await apiLogin('ana@example.test');await apiRequest('admin_save',{kind:'lessons',data:{}});assert.equal(calls[0].userEmail,undefined);assert.equal(calls[1].userEmail,'admin@example.test');assert.ok(calls[1].requestId);assert.equal('token' in calls[1],false);globalThis.fetch=async()=>({ok:true,json:async()=>({error:'Conflito',code:'CONFLICT'})});await assert.rejects(apiRequest('admin_save'),e=>e.code==='CONFLICT');});
+test('saída HTML, links e CSV não interpretam texto como código',()=>{assert.equal(h('<img src="x">'),'&lt;img src=&quot;x&quot;&gt;');assert.equal(safeUrl('javascript:alert(1)'),'');assert.equal(safeUrl('https://user:pass@example.test'),'');assert.equal(csvCell('=SUM(A1)'),`"'=SUM(A1)"`);assert.deepEqual(parseCsv('titulo;texto\r\n"A; B";"linha 1\nlinha 2"'),[['titulo','texto'],['A; B','linha 1\nlinha 2']]);assert.throws(()=>parseCsv('"sem fim'));});
